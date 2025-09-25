@@ -1,27 +1,40 @@
 #!/usr/bin/env python3
 """
-Web Application for ClickHouse MCP Demo
-Provides a web interface to interact with the MCP server and vLLM
+FastAPI Web Application for ClickHouse Schema Assistant
+Provides live ClickHouse database schema visualization with AI-powered chat interface
 """
 
-from flask import Flask, render_template, request, jsonify
-from flask_cors import CORS
-import asyncio
-import json
-import requests
-import subprocess
-import os
-from typing import Dict, Any, List
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+from fastapi.responses import HTMLResponse
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from typing import Dict, Any, List, Optional
 import clickhouse_connect
+import requests
+import json
+import os
+import uvicorn
+import asyncio
 
-app = Flask(__name__)
-CORS(app)
+# Initialize FastAPI app
+app = FastAPI(title="ClickHouse Schema Assistant", version="1.0.0")
 
-# Configuration
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Templates
+templates = Jinja2Templates(directory="src/templates")
+
+# Configuration from environment variables
 VLLM_URL = os.getenv('VLLM_URL', 'http://localhost:8000')
-MCP_SERVER_PATH = '/app/mcp_server.py'
-
-# ClickHouse configuration
 CLICKHOUSE_CONFIG = {
     'host': os.getenv('CLICKHOUSE_HOST', 'localhost'),
     'port': int(os.getenv('CLICKHOUSE_PORT', 8123)),
@@ -30,6 +43,20 @@ CLICKHOUSE_CONFIG = {
     'database': os.getenv('CLICKHOUSE_DATABASE', 'default')
 }
 
+# Pydantic models
+class ChatRequest(BaseModel):
+    message: str
+
+class ChatResponse(BaseModel):
+    response: str
+    tool_result: Optional[str] = None
+    tool_used: Optional[str] = None
+
+class ToolRequest(BaseModel):
+    tool_name: str
+    arguments: Dict[str, Any] = {}
+
+# ClickHouse client management
 def get_clickhouse_client():
     """Create ClickHouse client connection"""
     try:
@@ -44,161 +71,13 @@ def get_clickhouse_client():
         print(f"ClickHouse connection failed: {e}")
         return None
 
-def get_mock_data(tool_name: str, arguments: dict) -> str:
-    """Get mock data for demonstration when ClickHouse is not available"""
-    ALLOWED_TABLES = ['users', 'orders', 'products', 'inventory', 'analytics_events']
-
-    if tool_name == "list_tables_with_columns":
-        result = """DATABASE TABLES AND COLUMNS:
-
-📋 USERS TABLE:
-• user_id (UInt32) - Primary key
-• username (String) - User login name
-• email (String) - Email address
-• first_name (String) - First name
-• last_name (String) - Last name
-• created_at (DateTime) - Account creation date
-• is_active (UInt8) - Active status (0/1)
-• account_type (Enum8) - Account type: free, premium, enterprise
-
-📋 ORDERS TABLE:
-• order_id (UInt32) - Primary key
-• user_id (UInt32) - Foreign key to users
-• product_id (UInt32) - Foreign key to products
-• quantity (UInt16) - Order quantity
-• total_amount (Decimal(10,2)) - Total order amount
-• order_date (DateTime) - Order timestamp
-• status (Enum8) - Order status: pending, processing, shipped, delivered, cancelled
-• shipping_address (String) - Delivery address
-
-📋 PRODUCTS TABLE:
-• product_id (UInt32) - Primary key
-• product_name (String) - Product name
-• category (String) - Product category
-• price (Decimal(10,2)) - Product price
-• stock_quantity (UInt32) - Available stock
-• manufacturer (String) - Manufacturer name
-• created_at (DateTime) - Product creation date
-• is_available (UInt8) - Availability status (0/1)
-
-📋 INVENTORY TABLE:
-• inventory_id (UInt32) - Primary key
-• product_id (UInt32) - Foreign key to products
-• warehouse_id (UInt16) - Warehouse identifier
-• quantity_available (UInt32) - Available quantity
-• quantity_reserved (UInt32) - Reserved quantity
-• last_restocked (DateTime) - Last restock date
-• reorder_level (UInt32) - Minimum stock level
-• reorder_quantity (UInt32) - Reorder amount
-
-📋 ANALYTICS_EVENTS TABLE:
-• event_id (UUID) - Primary key
-• user_id (UInt32) - Foreign key to users
-• event_type (String) - Type of event
-• event_timestamp (DateTime) - Event time
-• page_url (String) - Page URL
-• session_id (String) - Session identifier
-• device_type (Enum8) - Device: desktop, mobile, tablet
-• browser (String) - Browser name
-• country (String) - User country
-• properties (String) - Additional JSON properties"""
-
-        return result
-
-    elif tool_name == "get_database_schema":
-        result = """DATABASE SCHEMA WITH RELATIONSHIPS:
-
-┌─────────────────────────────────────────────────────┐
-│                    USERS TABLE                      │
-├──────────────────┬─────────────────┬────────────────┤
-│ Column Name      │ Type            │ Key            │
-├──────────────────┼─────────────────┼────────────────┤
-│ user_id          │ UInt32          │ PRIMARY        │
-│ username         │ String          │                │
-│ email            │ String          │                │
-│ first_name       │ String          │                │
-│ last_name        │ String          │                │
-│ created_at       │ DateTime        │                │
-│ is_active        │ UInt8           │                │
-│ account_type     │ Enum8           │                │
-└──────────────────┴─────────────────┴────────────────┘
-
-┌─────────────────────────────────────────────────────┐
-│                    ORDERS TABLE                     │
-├──────────────────┬─────────────────┬────────────────┤
-│ Column Name      │ Type            │ Key            │
-├──────────────────┼─────────────────┼────────────────┤
-│ order_id         │ UInt32          │ PRIMARY        │
-│ user_id          │ UInt32          │ FOREIGN        │
-│ product_id       │ UInt32          │ FOREIGN        │
-│ quantity         │ UInt16          │                │
-│ total_amount     │ Decimal(10,2)   │                │
-│ order_date       │ DateTime        │                │
-│ status           │ Enum8           │                │
-│ shipping_address │ String          │                │
-└──────────────────┴─────────────────┴────────────────┘
-
-┌─────────────────────────────────────────────────────┐
-│                   PRODUCTS TABLE                    │
-├──────────────────┬─────────────────┬────────────────┤
-│ Column Name      │ Type            │ Key            │
-├──────────────────┼─────────────────┼────────────────┤
-│ product_id       │ UInt32          │ PRIMARY        │
-│ product_name     │ String          │                │
-│ category         │ String          │                │
-│ price            │ Decimal(10,2)   │                │
-│ stock_quantity   │ UInt32          │                │
-│ manufacturer     │ String          │                │
-│ created_at       │ DateTime        │                │
-│ is_available     │ UInt8           │                │
-└──────────────────┴─────────────────┴────────────────┘
-
-┌─────────────────────────────────────────────────────┐
-│                  INVENTORY TABLE                    │
-├──────────────────┬─────────────────┬────────────────┤
-│ Column Name      │ Type            │ Key            │
-├──────────────────┼─────────────────┼────────────────┤
-│ inventory_id     │ UInt32          │ PRIMARY        │
-│ product_id       │ UInt32          │ FOREIGN        │
-│ warehouse_id     │ UInt16          │                │
-│ quantity_available│ UInt32         │                │
-│ quantity_reserved│ UInt32          │                │
-│ last_restocked   │ DateTime        │                │
-│ reorder_level    │ UInt32          │                │
-│ reorder_quantity │ UInt32          │                │
-└──────────────────┴─────────────────┴────────────────┘
-
-┌─────────────────────────────────────────────────────┐
-│                ANALYTICS_EVENTS TABLE              │
-├──────────────────┬─────────────────┬────────────────┤
-│ Column Name      │ Type            │ Key            │
-├──────────────────┼─────────────────┼────────────────┤
-│ event_id         │ UUID            │ PRIMARY        │
-│ user_id          │ UInt32          │ FOREIGN        │
-│ event_type       │ String          │                │
-│ event_timestamp  │ DateTime        │                │
-│ page_url         │ String          │                │
-│ session_id       │ String          │                │
-│ device_type      │ Enum8           │                │
-│ browser          │ String          │                │
-│ country          │ String          │                │
-│ properties       │ String          │                │
-└──────────────────┴─────────────────┴────────────────┘
-
-🔗 TABLE RELATIONSHIPS:
-• orders.user_id        → users.user_id
-• orders.product_id     → products.product_id
-• inventory.product_id  → products.product_id
-• analytics_events.user_id → users.user_id"""
-
-        return result
-
-    return "Tool result"
-
+# Live data functions - NO MOCK DATA
 def get_live_tables_with_columns(client) -> str:
     """Get live tables and columns from ClickHouse system tables"""
+    if not client:
+        raise HTTPException(status_code=503, detail="ClickHouse database not available")
+
     try:
-        # Get all tables with their columns
         query = """
         SELECT
             table AS table_name,
@@ -233,12 +112,14 @@ def get_live_tables_with_columns(client) -> str:
         return output
 
     except Exception as e:
-        return f"Error getting live tables: {e}"
+        raise HTTPException(status_code=500, detail=f"Error querying ClickHouse: {e}")
 
 def get_live_database_schema(client) -> str:
     """Get live database schema in table format from ClickHouse system tables"""
+    if not client:
+        raise HTTPException(status_code=503, detail="ClickHouse database not available")
+
     try:
-        # Get all tables with their columns
         query = """
         SELECT
             table AS table_name,
@@ -281,7 +162,7 @@ def get_live_database_schema(client) -> str:
 
             output += "└──────────────────┴─────────────────┴────────────────┘\n\n"
 
-        # Try to detect relationships by foreign key naming convention
+        # Detect relationships by foreign key naming convention
         relationships = detect_relationships(tables)
         if relationships:
             output += "🔗 TABLE RELATIONSHIPS:\n"
@@ -291,7 +172,7 @@ def get_live_database_schema(client) -> str:
         return output
 
     except Exception as e:
-        return f"Error getting live schema: {e}"
+        raise HTTPException(status_code=500, detail=f"Error querying ClickHouse: {e}")
 
 def detect_relationships(tables) -> List[str]:
     """Detect relationships based on column naming conventions"""
@@ -309,99 +190,6 @@ def detect_relationships(tables) -> List[str]:
 
     return relationships
 
-async def call_mcp_tool(tool_name: str, arguments: dict) -> str:
-    """Call ClickHouse or return mock data if not available"""
-    client = get_clickhouse_client()
-
-    if client is None:
-        # Fallback to mock data if ClickHouse is not available
-        return get_mock_data(tool_name, arguments)
-
-    try:
-        if tool_name == "list_tables_with_columns":
-            return get_live_tables_with_columns(client)
-        elif tool_name == "get_database_schema":
-            return get_live_database_schema(client)
-        else:
-            return get_mock_data(tool_name, arguments)
-    except Exception as e:
-        return f"Error querying ClickHouse: {e}"
-    finally:
-        try:
-            client.close()
-        except:
-            pass
-
-
-def format_table_as_ascii(headers, rows):
-    """Format data as ASCII table"""
-    if not headers and not rows:
-        return "No data available"
-
-    # Calculate column widths
-    col_widths = []
-    for i, header in enumerate(headers):
-        max_width = len(str(header))
-        for row in rows:
-            if i < len(row):
-                max_width = max(max_width, len(str(row[i])))
-        col_widths.append(min(max_width, 50))  # Cap at 50 chars
-
-    # Create separator line
-    separator = "+" + "+".join(["-" * (w + 2) for w in col_widths]) + "+"
-
-    # Format header
-    header_line = "|"
-    for i, header in enumerate(headers):
-        header_str = str(header)[:col_widths[i]]
-        header_line += f" {header_str:<{col_widths[i]}} |"
-
-    # Build table
-    table = [separator, header_line, separator]
-
-    # Format rows
-    for row in rows:
-        row_line = "|"
-        for i in range(len(headers)):
-            if i < len(row):
-                cell = str(row[i])[:col_widths[i]]
-            else:
-                cell = ""
-            row_line += f" {cell:<{col_widths[i]}} |"
-        table.append(row_line)
-
-    table.append(separator)
-    return "\\n".join(table)
-
-def query_vllm(messages: List[Dict[str, str]], max_tokens: int = 512) -> Dict[str, Any]:
-    """Query the vLLM server using chat completions"""
-    try:
-        response = requests.post(
-            f"{VLLM_URL}/v1/chat/completions",
-            json={
-                "model": "Qwen/Qwen3-4B",
-                "messages": messages,
-                "max_tokens": max_tokens,
-                "temperature": 0.2,
-                "top_p": 0.9,
-                "stream": False
-            },
-            timeout=30
-        )
-
-        if response.status_code == 200:
-            return response.json()
-        else:
-            return {"error": f"vLLM error: {response.status_code} - {response.text}"}
-
-    except Exception as e:
-        return {"error": str(e)}
-
-@app.route('/')
-def index():
-    """Serve the main page"""
-    return render_template('index.html')
-
 def detect_intent(message: str):
     """Simple keyword-based intent detection"""
     message_lower = message.lower()
@@ -415,138 +203,205 @@ def detect_intent(message: str):
     else:
         return "none", None
 
-@app.route('/api/chat', methods=['POST'])
-def chat():
-    """Handle chat messages with simple keyword matching"""
-    data = request.json
-    user_message = data.get('message', '')
+async def execute_clickhouse_tool(tool_name: str, arguments: dict) -> str:
+    """Execute ClickHouse tool - NO MOCK DATA FALLBACK"""
+    client = get_clickhouse_client()
 
-    if not user_message:
-        return jsonify({"error": "No message provided"}), 400
+    if not client:
+        raise HTTPException(
+            status_code=503,
+            detail="ClickHouse database is not available. Please check your database connection."
+        )
 
-    # Use simple keyword detection instead of AI
-    tool_name, table_name = detect_intent(user_message)
+    try:
+        if tool_name == "list_tables_with_columns":
+            return get_live_tables_with_columns(client)
+        elif tool_name == "get_database_schema":
+            return get_live_database_schema(client)
+        else:
+            raise HTTPException(status_code=400, detail=f"Unknown tool: {tool_name}")
+    finally:
+        try:
+            client.close()
+        except:
+            pass
 
-    if tool_name != "none":
-        # Execute the tool
-        arguments = {}
-
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        tool_result = loop.run_until_complete(call_mcp_tool(tool_name, arguments))
-        loop.close()
-
-        # Use vLLM to generate a nice explanation
-        final_messages = [
-            {
-                "role": "system",
-                "content": "You are a helpful ClickHouse database assistant. Explain the database information clearly and concisely. Do not include thinking text."
+async def query_vllm(messages: List[Dict[str, str]]) -> str:
+    """Query vLLM server with chat completion"""
+    try:
+        response = requests.post(
+            f"{VLLM_URL}/v1/chat/completions",
+            json={
+                "messages": messages,
+                "max_tokens": 512,
+                "temperature": 0.7
             },
-            {
-                "role": "user",
-                "content": f"User asked: '{user_message}'\n\nDatabase result:\n{tool_result}\n\nExplain this briefly:"
-            }
-        ]
+            timeout=30
+        )
 
-        final_response = query_vllm(final_messages, max_tokens=200)
+        if response.status_code != 200:
+            raise HTTPException(status_code=503, detail="vLLM server not available")
 
-        if "error" in final_response:
-            return jsonify({"response": tool_result, "tool_used": tool_name})
-
-        response_text = final_response["choices"][0]["message"]["content"].strip()
+        data = response.json()
+        content = data['choices'][0]['message']['content']
 
         # Remove thinking tokens if present
-        if response_text.startswith("<think>"):
-            # Extract content after </think>
-            end_think = response_text.find("</think>")
-            if end_think != -1:
-                response_text = response_text[end_think + 8:].strip()
-            else:
-                # If no closing tag, remove everything before first paragraph
-                response_text = response_text.split('\n\n', 1)[-1] if '\n\n' in response_text else response_text
+        if '<think>' in content:
+            content = content.split('</think>')[-1].strip()
 
-        return jsonify({
-            "response": response_text,
-            "tool_used": tool_name,
-            "tool_result": tool_result
-        })
+        return content
 
-    else:
-        # Direct chat response
-        chat_messages = [
-            {
-                "role": "system",
-                "content": "You are a helpful ClickHouse database assistant. Be brief and helpful. Available tables: users, orders, products, inventory, analytics_events."
-            },
-            {
-                "role": "user",
-                "content": user_message
-            }
-        ]
+    except requests.exceptions.RequestException as e:
+        raise HTTPException(status_code=503, detail=f"vLLM server not available: {e}")
 
-        chat_response = query_vllm(chat_messages, max_tokens=150)
+# Routes
+@app.get("/", response_class=HTMLResponse)
+async def index(request: Request):
+    """Serve the main page"""
+    return templates.TemplateResponse("index.html", {"request": request})
 
-        if "error" in chat_response:
-            return jsonify({"response": "I can help you explore ClickHouse tables. Try asking about table schemas or sample data!"})
+@app.post("/api/chat", response_model=ChatResponse)
+async def chat(chat_request: ChatRequest):
+    """Handle chat messages with ClickHouse integration"""
+    try:
+        # Detect intent
+        tool_name, arguments = detect_intent(chat_request.message)
 
-        response_text = chat_response["choices"][0]["message"]["content"].strip()
+        if tool_name != "none":
+            try:
+                # Execute ClickHouse tool
+                tool_result = await execute_clickhouse_tool(tool_name, arguments or {})
 
-        # Remove thinking tokens if present
-        if response_text.startswith("<think>"):
-            end_think = response_text.find("</think>")
-            if end_think != -1:
-                response_text = response_text[end_think + 8:].strip()
-            else:
-                response_text = response_text.split('\n\n', 1)[-1] if '\n\n' in response_text else response_text
+                # Generate natural language response using vLLM
+                messages = [
+                    {"role": "system", "content": "You are a ClickHouse database assistant. Provide helpful responses about database schemas."},
+                    {"role": "user", "content": f"Based on this ClickHouse schema information:\n\n{tool_result}\n\nUser asked: {chat_request.message}"}
+                ]
 
-        return jsonify({
-            "response": response_text
-        })
+                response = await query_vllm(messages)
 
-@app.route('/api/tools', methods=['GET'])
-def list_tools():
-    """List available MCP tools"""
-    return jsonify({
+                return ChatResponse(
+                    response=response,
+                    tool_result=tool_result,
+                    tool_used=tool_name
+                )
+
+            except HTTPException as e:
+                if e.status_code == 503:
+                    # ClickHouse is not available - provide helpful message
+                    error_message = """❌ ClickHouse Database Not Available
+
+To use the ClickHouse Schema Assistant, you need:
+
+1. **Start ClickHouse Server**:
+   - Install ClickHouse server locally
+   - Or configure connection to remote ClickHouse
+
+2. **Set Environment Variables**:
+   ```bash
+   export CLICKHOUSE_HOST=localhost
+   export CLICKHOUSE_PORT=8123
+   export CLICKHOUSE_USER=default
+   export CLICKHOUSE_PASSWORD=your_password
+   export CLICKHOUSE_DATABASE=your_database
+   ```
+
+3. **Verify Connection**:
+   - Check `/health` endpoint
+   - Ensure ClickHouse is running on configured port
+
+Once connected, I can show you real-time database schemas!"""
+
+                    return ChatResponse(
+                        response=error_message,
+                        tool_result="ClickHouse database connection failed",
+                        tool_used="error_handler"
+                    )
+                else:
+                    raise
+        else:
+            # Regular chat without tools
+            try:
+                messages = [
+                    {"role": "system", "content": "You are a ClickHouse database assistant. Help users with database questions and setup."},
+                    {"role": "user", "content": chat_request.message}
+                ]
+
+                response = await query_vllm(messages)
+                return ChatResponse(response=response)
+
+            except HTTPException:
+                # vLLM not available - provide basic response
+                return ChatResponse(
+                    response="I'm a ClickHouse database assistant. I can help you explore database schemas when ClickHouse is connected. To get started, please ensure ClickHouse server is running and properly configured."
+                )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal server error: {e}")
+
+@app.post("/api/direct_tool")
+async def direct_tool(tool_request: ToolRequest):
+    """Direct tool execution endpoint"""
+    try:
+        result = await execute_clickhouse_tool(tool_request.tool_name, tool_request.arguments)
+        return {"result": result}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Tool execution failed: {e}")
+
+@app.get("/api/tools")
+async def list_tools():
+    """List available tools"""
+    return {
         "tools": [
             {
-                "name": "get_table_schema",
-                "description": "Get schema structure for a ClickHouse table",
-                "tables": ["users", "orders", "products", "inventory", "analytics_events"]
+                "name": "list_tables_with_columns",
+                "description": "List all tables with their columns and types",
+                "parameters": {}
             },
             {
-                "name": "list_tables",
-                "description": "List all available tables with their sizes"
-            },
-            {
-                "name": "get_sample_data",
-                "description": "Get sample rows from a table"
+                "name": "get_database_schema",
+                "description": "Get database schema in structured table format",
+                "parameters": {}
             }
         ]
-    })
+    }
 
-@app.route('/api/direct_tool', methods=['POST'])
-def direct_tool():
-    """Direct tool execution endpoint"""
-    data = request.json
-    tool_name = data.get('tool_name')
-    arguments = data.get('arguments', {})
-
-    if not tool_name:
-        return jsonify({"error": "No tool name provided"}), 400
-
-    # Execute the tool
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    result = loop.run_until_complete(call_mcp_tool(tool_name, arguments))
-    loop.close()
-
-    return jsonify({"result": result})
-
-@app.route('/health')
-def health():
+@app.get("/health")
+async def health_check():
     """Health check endpoint"""
-    return jsonify({"status": "healthy"})
+    # Test ClickHouse connection
+    client = get_clickhouse_client()
+    clickhouse_status = "healthy" if client else "unavailable"
+    if client:
+        try:
+            client.close()
+        except:
+            pass
 
-if __name__ == '__main__':
-    print("🌐 Starting Web Application on port 8095...")
-    app.run(host='0.0.0.0', port=8095, debug=False)
+    # Test vLLM connection
+    try:
+        response = requests.get(f"{VLLM_URL}/health", timeout=5)
+        vllm_status = "healthy" if response.status_code == 200 else "unhealthy"
+    except:
+        vllm_status = "unavailable"
+
+    return {
+        "status": "healthy",
+        "clickhouse": clickhouse_status,
+        "vllm": vllm_status,
+        "database": CLICKHOUSE_CONFIG['database']
+    }
+
+if __name__ == "__main__":
+    port = int(os.getenv('WEB_APP_PORT', 8095))
+    host = os.getenv('WEB_APP_HOST', '0.0.0.0')
+
+    print(f"🌐 Starting ClickHouse Schema Assistant on {host}:{port}...")
+    print(f"📊 ClickHouse: {CLICKHOUSE_CONFIG['host']}:{CLICKHOUSE_CONFIG['port']}")
+    print(f"🤖 vLLM: {VLLM_URL}")
+
+    uvicorn.run(app, host=host, port=port)

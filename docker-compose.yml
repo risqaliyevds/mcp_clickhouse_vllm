@@ -3,7 +3,7 @@ version: '3.8'
 services:
   clickhouse:
     image: clickhouse/clickhouse-server:latest
-    container_name: clickhouse-test
+    container_name: clickhouse-server
     ports:
       - "8123:8123"  # HTTP interface
       - "9000:9000"  # Native protocol
@@ -13,57 +13,17 @@ services:
     environment:
       CLICKHOUSE_DB: testdb
       CLICKHOUSE_USER: default
-      CLICKHOUSE_PASSWORD: password
+      CLICKHOUSE_PASSWORD:
       CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
     ulimits:
       nofile:
         soft: 262144
         hard: 262144
-    networks:
-      - mcp-network
+    healthcheck:
+      test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
 
-  mcp-server:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.mcp
-    container_name: mcp-server
-    volumes:
-      - ./src:/app
-    environment:
-      CLICKHOUSE_HOST: clickhouse
-      CLICKHOUSE_PORT: 8123
-      CLICKHOUSE_USER: default
-      CLICKHOUSE_PASSWORD: password
-      CLICKHOUSE_DATABASE: testdb
-    depends_on:
-      - clickhouse
-    networks:
-      - mcp-network
-    stdin_open: true
-    tty: true
-
-  web-app:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.app
-    container_name: web-app
-    ports:
-      - "8080:8080"
-    volumes:
-      - ./src:/app
-    environment:
-      CLICKHOUSE_HOST: clickhouse
-      CLICKHOUSE_PORT: 8123
-      CLICKHOUSE_USER: default
-      CLICKHOUSE_PASSWORD: password
-      CLICKHOUSE_DATABASE: testdb
-      VLLM_URL: http://host.docker.internal:8000
-    depends_on:
-      - clickhouse
-      - mcp-server
-    networks:
-      - mcp-network
-
-networks:
-  mcp-network:
-    driver: bridge
+volumes:
+  clickhouse-data:

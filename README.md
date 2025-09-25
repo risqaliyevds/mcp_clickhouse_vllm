@@ -1,11 +1,11 @@
 # ClickHouse Schema Assistant
 
-A dynamic web application that provides real-time ClickHouse database schema visualization and exploration with AI-powered chat interface.
+A **FastAPI-based** web application that provides real-time ClickHouse database schema visualization and exploration with AI-powered chat interface. **100% live data - no mock data or hardcoded values.**
 
 ## Features
 
 - **Live Database Connection**: Automatically connects to ClickHouse and queries real schema information
-- **Smart Fallback**: Falls back to mock data when ClickHouse is unavailable
+- **No Mock Data**: Application only works with real ClickHouse data - no fallbacks
 - **Dynamic Schema Detection**: Reads table structures directly from `system.tables` and `system.columns`
 - **Relationship Detection**: Automatically detects foreign key relationships based on naming conventions
 - **AI-Powered Chat**: Uses vLLM (Qwen3-4B) for natural language interaction
