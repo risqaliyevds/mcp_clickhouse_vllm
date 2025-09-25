@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ClickHouse MCP Schema Assistant</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            max-width: 1200px;
+            width: 100%;
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            opacity: 0.9;
+            font-size: 1.1em;
+        }
+
+        .main-content {
+            display: flex;
+            height: 600px;
+        }
+
+        .sidebar {
+            width: 250px;
+            background: #f7f9fc;
+            padding: 20px;
+            border-right: 1px solid #e0e0e0;
+            overflow-y: auto;
+        }
+
+        .sidebar h3 {
+            color: #333;
+            margin-bottom: 15px;
+            font-size: 1.2em;
+        }
+
+        .tool-button {
+            width: 100%;
+            padding: 12px;
+            margin-bottom: 10px;
+            background: white;
+            border: 2px solid #667eea;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.3s;
+            font-size: 0.95em;
+            color: #333;
+        }
+
+        .tool-button:hover {
+            background: #667eea;
+            color: white;
+        }
+
+        .table-list {
+            margin-top: 20px;
+        }
+
+        .table-item {
+            padding: 8px;
+            background: white;
+            border-radius: 5px;
+            margin-bottom: 5px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .table-item:hover {
+            background: #667eea;
+            color: white;
+        }
+
+        .chat-container {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .messages {
+            flex: 1;
+            padding: 20px;
+            overflow-y: auto;
+            background: #fafafa;
+        }
+
+        .message {
+            margin-bottom: 20px;
+            animation: slideIn 0.3s ease;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .message.user {
+            text-align: right;
+        }
+
+        .message.assistant {
+            text-align: left;
+        }
+
+        .message-content {
+            display: inline-block;
+            padding: 12px 16px;
+            border-radius: 15px;
+            max-width: 70%;
+            word-wrap: break-word;
+        }
+
+        .message.user .message-content {
+            background: #667eea;
+            color: white;
+        }
+
+        .message.assistant .message-content {
+            background: white;
+            border: 1px solid #e0e0e0;
+            color: #333;
+        }
+
+        .message.assistant .message-content pre {
+            background: #f4f4f4;
+            padding: 10px;
+            border-radius: 5px;
+            overflow-x: auto;
+            margin-top: 10px;
+        }
+
+        .tool-indicator {
+            font-size: 0.85em;
+            color: #667eea;
+            margin-top: 5px;
+            font-style: italic;
+        }
+
+        .input-container {
+            padding: 20px;
+            background: white;
+            border-top: 1px solid #e0e0e0;
+            display: flex;
+            gap: 10px;
+        }
+
+        .input-field {
+            flex: 1;
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 25px;
+            font-size: 1em;
+            transition: border-color 0.3s;
+        }
+
+        .input-field:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .send-button {
+            padding: 12px 30px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 25px;
+            cursor: pointer;
+            font-size: 1em;
+            transition: transform 0.2s;
+        }
+
+        .send-button:hover {
+            transform: scale(1.05);
+        }
+
+        .send-button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .examples {
+            padding: 15px;
+            background: #f0f4f8;
+            border-radius: 10px;
+            margin-top: 20px;
+        }
+
+        .examples h4 {
+            color: #333;
+            margin-bottom: 10px;
+        }
+
+        .example-query {
+            padding: 8px;
+            background: white;
+            border-radius: 5px;
+            margin-bottom: 5px;
+            cursor: pointer;
+            font-size: 0.9em;
+            transition: all 0.3s;
+        }
+
+        .example-query:hover {
+            background: #667eea;
+            color: white;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🗄️ ClickHouse Schema Assistant</h1>
+            <p>Powered by MCP + vLLM | Explore your database schemas with AI</p>
+        </div>
+
+        <div class="main-content">
+            <div class="sidebar">
+                <h3>Quick Actions</h3>
+                <button class="tool-button" onclick="executeTool('list_tables', {})">
+                    📊 List All Tables
+                </button>
+
+                <div class="table-list">
+                    <h3>Available Tables</h3>
+                    <div class="table-item" onclick="getSchema('users')">👤 users</div>
+                    <div class="table-item" onclick="getSchema('orders')">📦 orders</div>
+                    <div class="table-item" onclick="getSchema('products')">🛍️ products</div>
+                    <div class="table-item" onclick="getSchema('inventory')">📋 inventory</div>
+                    <div class="table-item" onclick="getSchema('analytics_events')">📈 analytics_events</div>
+                </div>
+
+                <div class="examples">
+                    <h4>Example Queries</h4>
+                    <div class="example-query" onclick="sendExample('Show me the schema for the users table')">
+                        Schema for users table
+                    </div>
+                    <div class="example-query" onclick="sendExample('What columns does the orders table have?')">
+                        Orders table columns
+                    </div>
+                    <div class="example-query" onclick="sendExample('Get sample data from products table')">
+                        Sample product data
+                    </div>
+                    <div class="example-query" onclick="sendExample('List all available tables')">
+                        List all tables
+                    </div>
+                </div>
+            </div>
+
+            <div class="chat-container">
+                <div class="messages" id="messages">
+                    <div class="message assistant">
+                        <div class="message-content">
+                            👋 Hello! I'm your ClickHouse Schema Assistant. I can help you explore your database structure, view table schemas, and understand your data.
+                            <br><br>
+                            Try asking me about:
+                            <ul style="margin-left: 20px; margin-top: 10px;">
+                                <li>Table schemas and structures</li>
+                                <li>Column information and types</li>
+                                <li>Sample data from tables</li>
+                                <li>Database organization</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="input-container">
+                    <input
+                        type="text"
+                        class="input-field"
+                        id="messageInput"
+                        placeholder="Ask about your database schema..."
+                        onkeypress="handleKeyPress(event)"
+                    >
+                    <button class="send-button" id="sendButton" onclick="sendMessage()">
+                        Send
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let isProcessing = false;
+
+        function handleKeyPress(event) {
+            if (event.key === 'Enter' && !isProcessing) {
+                sendMessage();
+            }
+        }
+
+        function sendExample(text) {
+            document.getElementById('messageInput').value = text;
+            sendMessage();
+        }
+
+        function getSchema(tableName) {
+            const message = `Show me the schema for the ${tableName} table`;
+            document.getElementById('messageInput').value = message;
+            sendMessage();
+        }
+
+        function executeTool(toolName, args) {
+            addMessage('user', `Execute tool: ${toolName}`);
+
+            fetch('/api/direct_tool', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    tool_name: toolName,
+                    arguments: args
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                addMessage('assistant', formatResponse(data.result));
+            })
+            .catch(error => {
+                addMessage('assistant', 'Error executing tool: ' + error);
+            });
+        }
+
+        function sendMessage() {
+            if (isProcessing) return;
+
+            const input = document.getElementById('messageInput');
+            const message = input.value.trim();
+
+            if (!message) return;
+
+            // Add user message
+            addMessage('user', message);
+
+            // Clear input
+            input.value = '';
+
+            // Show loading
+            isProcessing = true;
+            document.getElementById('sendButton').disabled = true;
+            addMessage('assistant', '<div class="loading"></div>', true);
+
+            // Send to server
+            fetch('/api/chat', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({message: message})
+            })
+            .then(response => response.json())
+            .then(data => {
+                // Remove loading message
+                const messages = document.getElementById('messages');
+                messages.removeChild(messages.lastChild);
+
+                // Add response
+                let responseHtml = formatResponse(data.response);
+
+                if (data.tool_used) {
+                    responseHtml += `<div class="tool-indicator">🔧 Tool used: ${data.tool_used}</div>`;
+                }
+
+                addMessage('assistant', responseHtml);
+            })
+            .catch(error => {
+                // Remove loading message
+                const messages = document.getElementById('messages');
+                messages.removeChild(messages.lastChild);
+
+                addMessage('assistant', 'Error: ' + error);
+            })
+            .finally(() => {
+                isProcessing = false;
+                document.getElementById('sendButton').disabled = false;
+            });
+        }
+
+        function formatResponse(text) {
+            // Format code blocks
+            text = text.replace(/```([\s\S]*?)```/g, '<pre>$1</pre>');
+
+            // Format inline code
+            text = text.replace(/`([^`]+)`/g, '<code>$1</code>');
+
+            // Format tables (simple ASCII tables)
+            if (text.includes('+---') || text.includes('╔═══')) {
+                text = '<pre>' + text + '</pre>';
+            }
+
+            // Convert line breaks
+            text = text.replace(/\n/g, '<br>');
+
+            return text;
+        }
+
+        function addMessage(sender, content, isHtml = false) {
+            const messages = document.getElementById('messages');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${sender}`;
+
+            const contentDiv = document.createElement('div');
+            contentDiv.className = 'message-content';
+
+            if (isHtml) {
+                contentDiv.innerHTML = content;
+            } else {
+                contentDiv.innerHTML = content;
+            }
+
+            messageDiv.appendChild(contentDiv);
+            messages.appendChild(messageDiv);
+
+            // Scroll to bottom
+            messages.scrollTop = messages.scrollHeight;
+        }
+
+        // Focus on input when page loads
+        window.onload = function() {
+            document.getElementById('messageInput').focus();
+        };
+    </script>
+</body>
+</html>

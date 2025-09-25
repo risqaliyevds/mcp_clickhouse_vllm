@@ -1,0 +1,82 @@
+version: '3.8'
+
+services:
+  clickhouse:
+    image: clickhouse/clickhouse-server:latest
+    container_name: clickhouse-test
+    ports:
+      - "8123:8123"  # HTTP interface
+      - "9000:9000"  # Native protocol
+    volumes:
+      - ./data/clickhouse:/var/lib/clickhouse
+      - ./docker/clickhouse/init.sql:/docker-entrypoint-initdb.d/init.sql
+    environment:
+      CLICKHOUSE_DB: testdb
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_PASSWORD: password
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    networks:
+      - mcp-network
+
+  mcp-server:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.mcp
+    container_name: mcp-server
+    volumes:
+      - ./src:/app
+    environment:
+      CLICKHOUSE_HOST: clickhouse
+      CLICKHOUSE_PORT: 8123
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_PASSWORD: password
+      CLICKHOUSE_DATABASE: testdb
+    depends_on:
+      - clickhouse
+    networks:
+      - mcp-network
+    stdin_open: true
+    tty: true
+
+  web-app:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.app
+    container_name: web-app
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./src:/app
+    environment:
+      CLICKHOUSE_HOST: clickhouse
+      CLICKHOUSE_PORT: 8123
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_PASSWORD: password
+      CLICKHOUSE_DATABASE: testdb
+      MOCK_VLLM_URL: http://mock-vllm:8000
+    depends_on:
+      - clickhouse
+      - mcp-server
+      - mock-vllm
+    networks:
+      - mcp-network
+
+  mock-vllm:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.vllm
+    container_name: mock-vllm
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./src:/app
+    networks:
+      - mcp-network
+
+networks:
+  mcp-network:
+    driver: bridge

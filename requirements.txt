@@ -1,0 +1,23 @@
+# MCP and ClickHouse dependencies
+mcp>=0.1.0
+clickhouse-connect>=0.7.0
+
+# Web framework dependencies
+flask>=3.0.0
+flask-cors>=4.0.0
+
+# FastAPI for mock vLLM server
+fastapi>=0.104.0
+uvicorn>=0.24.0
+pydantic>=2.5.0
+
+# HTTP client
+requests>=2.31.0
+httpx>=0.25.0
+
+# Async support
+asyncio-mqtt>=0.16.0
+aiofiles>=23.2.0
+
+# Python utilities
+python-dotenv>=1.0.0
