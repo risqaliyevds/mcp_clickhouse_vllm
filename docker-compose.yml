@@ -57,23 +57,10 @@ services:
       CLICKHOUSE_USER: default
       CLICKHOUSE_PASSWORD: password
       CLICKHOUSE_DATABASE: testdb
-      MOCK_VLLM_URL: http://mock-vllm:8000
+      VLLM_URL: http://host.docker.internal:8000
     depends_on:
       - clickhouse
       - mcp-server
-      - mock-vllm
-    networks:
-      - mcp-network
-
-  mock-vllm:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.vllm
-    container_name: mock-vllm
-    ports:
-      - "8000:8000"
-    volumes:
-      - ./src:/app
     networks:
       - mcp-network
 
